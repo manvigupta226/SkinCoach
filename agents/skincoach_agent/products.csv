@@ -1,0 +1,11 @@
+name,category,skin_type,concern,vendor,url,price
+Gentle Hydrating Cleanser,cleanser,dry,dehydration,VendorA,https://example.com/hydrating-cleanser-a,499
+Gentle Hydrating Cleanser,cleanser,dry,dehydration,VendorB,https://example.com/hydrating-cleanser-b,459
+Oil Control Foaming Wash,cleanser,oily,acne,VendorA,https://example.com/oil-foam-a,399
+Oil Control Foaming Wash,cleanser,oily,acne,VendorC,https://example.com/oil-foam-c,379
+Niacinamide 10% Serum,serum,oily,"acne,pores",VendorB,https://example.com/niacinamide-b,599
+Niacinamide 10% Serum,serum,combo,"acne,pores",VendorD,https://example.com/niacinamide-d,549
+Ceramide Barrier Cream,moisturizer,dry,"barrier,redness",VendorA,https://example.com/ceramide-a,799
+Ceramide Barrier Cream,moisturizer,sensitive,"barrier,redness",VendorC,https://example.com/ceramide-c,749
+Gel Sunscreen SPF 50,sunscreen,oily,"acne,pigmentation",VendorB,https://example.com/gelspf-b,699
+Gel Sunscreen SPF 50,sunscreen,combo,"acne,pigmentation",VendorE,https://example.com/gelspf-e,649
