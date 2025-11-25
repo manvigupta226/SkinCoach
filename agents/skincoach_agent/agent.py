@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from typing import Optional
 from google.genai import types
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -11,6 +12,7 @@ from .tools import suggest_products, get_cheapest_product
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 GEMINI_MODEL = "gemini-2.5-flash"
+APP_NAME = "skincoach_app"
 
 # --- Sub-agents ---
 
@@ -89,14 +91,22 @@ root_agent = LlmAgent(
 session_service = InMemorySessionService()
 runner = Runner(
     agent=root_agent,
-    app_name="skincoach_app",
+    app_name=APP_NAME,
     session_service=session_service,
 )
 
 
-async def run_skincoach(message: str, user_context: str, user_id: str, session_id: str) -> str:
+async def run_skincoach(
+    message: str,
+    user_context: str,
+    user_id: str,
+    session_id: str,
+) -> str:
     """
     Helper for FastAPI: run SkinCoach with extra user_context stitched in.
+
+    We explicitly create the session (if it doesn't already exist),
+    then call Runner.run_async with that session_id.
     """
     full_prompt = (
         "Here is the current user context (profile + last diary entries):\n"
@@ -106,13 +116,25 @@ async def run_skincoach(message: str, user_context: str, user_id: str, session_i
     )
     content = types.Content(role="user", parts=[types.Part(text=full_prompt)])
 
+    # 1) Ensure the session exists for this (app_name, user_id, session_id)
+    try:
+        await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception as e:
+        # Most likely: session already exists. That's fine – we just continue.
+        print(f"[SkinCoach] create_session skipped or failed (probably already exists): {e}")
+
+    # 2) Run the agent within that session
     async for event in runner.run_async(
         user_id=user_id,
         session_id=session_id,
         new_message=content,
     ):
         if event.is_final_response():
-            # Naively return text; you can later parse for JSON if you enforce it
+            # Return the text of the final response
             return event.content.parts[0].text
 
     return "Sorry, I couldn't generate a response this time."
