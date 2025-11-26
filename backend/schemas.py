@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 
@@ -17,6 +17,11 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None  # can be UUID per browser tab
 
 
 # Profile
@@ -58,10 +63,34 @@ class DiaryEntryOut(BaseModel):
 
 
 # Chat
-class ChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None  # can be UUID per browser tab
 
 
 class ChatResponse(BaseModel):
     response: str
+
+class ChatMessageOut(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True    
+
+#Routine
+class RoutineStep(BaseModel):
+    step: str
+    product_name: str
+
+class RoutineResponse(BaseModel):
+    id: int
+    created_at: datetime
+    am_steps: List[RoutineStep]
+    pm_steps: List[RoutineStep]
+    note: Optional[str] = None
+
+    class Config:
+        from_attributes = True  # or orm_mode = True in older Pydantic    
+
+class RoutineGenerateRequest(BaseModel):
+    reason: Optional[str] = None  # why user wants update / complaint etc.
+

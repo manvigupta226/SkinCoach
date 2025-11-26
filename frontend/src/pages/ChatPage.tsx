@@ -1,23 +1,137 @@
+// src/pages/ChatPage.tsx
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { v4 as uuidv4 } from "uuid";
 import { api } from "../api";
 
 type Message = { role: "user" | "assistant"; text: string };
 
+type ChatMessageFromApi = {
+  role: "user" | "assistant";
+  text: string;
+  created_at: string;
+};
+
+// Types for possible JSON routine structure
+type ChatProduct = {
+  name: string;
+  category?: string;
+  ingredients?: string;
+};
+
+type ChatRoutineStep = {
+  step: string;
+  description?: string;
+  products?: ChatProduct[];
+};
+
+type ChatRoutine = {
+  am_steps?: ChatRoutineStep[];
+  pm_steps?: ChatRoutineStep[];
+  notes?: string;
+};
+
+function formatRoutineJsonToText(raw: string): string {
+  let text = raw.trim();
+
+  // Strip ```json ... ``` fences if present
+  if (text.startsWith("```")) {
+    const lines = text.split("\n");
+    if (lines[0].startsWith("```")) {
+      lines.shift();
+    }
+    if (lines[lines.length - 1].startsWith("```")) {
+      lines.pop();
+    }
+    text = lines.join("\n").trim();
+  }
+
+  // Try to keep only the JSON object
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  try {
+    const data = JSON.parse(text) as ChatRoutine;
+    const { am_steps, pm_steps, notes } = data;
+
+    if (!am_steps && !pm_steps) return raw;
+
+    const lines: string[] = [];
+    lines.push("Here’s a routine I recommend based on your profile and diary:\n");
+
+    if (am_steps && am_steps.length > 0) {
+      lines.push("AM Routine:");
+      am_steps.forEach((step, idx) => {
+        lines.push(`${idx + 1}. ${step.step}`);
+        if (step.description) {
+          lines.push(`   - ${step.description}`);
+        }
+        if (step.products && step.products.length > 0) {
+          step.products.forEach((p) => {
+            lines.push(`   • Product: ${p.name}`);
+          });
+        }
+      });
+      lines.push("");
+    }
+
+    if (pm_steps && pm_steps.length > 0) {
+      lines.push("PM Routine:");
+      pm_steps.forEach((step, idx) => {
+        lines.push(`${idx + 1}. ${step.step}`);
+        if (step.description) {
+          lines.push(`   - ${step.description}`);
+        }
+        if (step.products && step.products.length > 0) {
+          step.products.forEach((p) => {
+            lines.push(`   • Product: ${p.name}`);
+          });
+        }
+      });
+      lines.push("");
+    }
+
+    if (notes) {
+      lines.push("Notes:");
+      lines.push(notes);
+    }
+
+    return lines.join("\n");
+  } catch {
+    return raw;
+  }
+}
+
 export function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [sessionId] = useState(() => uuidv4());
   const [loading, setLoading] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const navigate = useNavigate();
 
+  // Load chat history from backend on mount
   useEffect(() => {
-    // small guard to ensure user is logged in
-    const token = localStorage.getItem("token");
-    if (!token) {
-      navigate("/login");
+    async function loadHistory() {
+      try {
+        const res = await api.get<ChatMessageFromApi[]>("/chat/history");
+        const formatted: Message[] = res.data.map((m) => ({
+          role: m.role,
+          text: m.role === "assistant" ? formatRoutineJsonToText(m.text) : m.text,
+        }));
+        setMessages(formatted);
+      } catch (err: any) {
+        console.error(err);
+        if (err?.response?.status === 401) {
+          navigate("/login");
+        }
+      } finally {
+        setLoadingHistory(false);
+      }
     }
+
+    loadHistory();
   }, [navigate]);
 
   async function sendMessage() {
@@ -31,12 +145,15 @@ export function ChatPage() {
     try {
       const res = await api.post("/chat", {
         message: newMessage.text,
-        session_id: sessionId,
+        session_id: "ignored-on-backend",
       });
+
+      const rawResponse: string = res.data.response;
+      const formatted = formatRoutineJsonToText(rawResponse);
 
       const reply: Message = {
         role: "assistant",
-        text: res.data.response,
+        text: formatted,
       };
       setMessages((prev) => [...prev, reply]);
     } catch (err) {
@@ -77,12 +194,19 @@ export function ChatPage() {
 
       <main className="flex-1 flex flex-col max-w-3xl w-full mx-auto p-4 gap-4">
         <div className="flex-1 overflow-y-auto space-y-3">
-          {messages.length === 0 && (
+          {loadingHistory && messages.length === 0 && (
+            <div className="text-center text-sm text-slate-400 mt-10">
+              Loading your previous conversation...
+            </div>
+          )}
+
+          {!loadingHistory && messages.length === 0 && (
             <div className="text-center text-sm text-slate-400 mt-10">
               Start by telling SkinCoach your skin type and main concern, e.g.
               <br />
               <span className="italic">
-                “I have oily, acne-prone skin. I want a simple routine.”
+                “I have dry, sensitive skin and dullness. Help me with a
+                routine.”
               </span>
             </div>
           )}

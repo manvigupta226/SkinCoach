@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, DateTime, JSON
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .db import Base
@@ -15,6 +16,10 @@ class User(Base):
 
     profile = relationship("SkinProfile", back_populates="user", uselist=False)
     diary_entries = relationship("DiaryEntry", back_populates="user")
+    routines = relationship("SkinRoutine", back_populates="user")
+    chat_messages = relationship("ChatMessage", back_populates="user", cascade="all, delete-orphan")
+
+
 
 
 class SkinProfile(Base):
@@ -43,3 +48,30 @@ class DiaryEntry(Base):
     issues = Column(String, nullable=True)             # e.g. "dryness, redness"
 
     user = relationship("User", back_populates="diary_entries")
+
+class SkinRoutine(Base):
+    __tablename__ = "skin_routines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Each is a list of {"step": "...", "product_name": "..."}
+    am_routine = Column(JSON, nullable=False)
+    pm_routine = Column(JSON, nullable=False)
+
+    note = Column(Text, nullable=True)
+
+    user = relationship("User", back_populates="routines")    
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    session_id = Column(String, nullable=True)  # e.g. "chat-<user_id>"
+    role = Column(String, nullable=False)       # "user" or "assistant"
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="chat_messages")    

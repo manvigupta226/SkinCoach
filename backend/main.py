@@ -1,5 +1,6 @@
 # backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, APIRouter, HTTPException, status
+from google.genai import errors as genai_errors
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -8,12 +9,19 @@ import uuid
 
 from .db import Base, engine, get_db
 from . import models, schemas
+from .models import SkinRoutine
+from .models import ChatMessage
+from .schemas import RoutineResponse, RoutineGenerateRequest, ChatMessageOut, ChatRequest
+
 from .auth import (
     hash_password,
     authenticate_user,
     create_access_token,
     get_current_user,
 )
+from agents.skincoach_agent.agent import generate_routine_for_user
+
+router = APIRouter()
 
 # Import ADK runner helper
 from agents.skincoach_agent.agent import run_skincoach
@@ -188,6 +196,75 @@ def list_diary_entries(
     )
     return [serialize_diary_entry(e) for e in entries]
 
+# ---------- Routine endpoints ----------
+
+@app.post("/routine/generate", response_model=RoutineResponse)
+async def generate_routine(
+    payload: RoutineGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    
+    
+    # Call SkinCoach for a new routine
+    am, pm, notes = await generate_routine_for_user(
+        user_id=str(current_user.id),
+        session_id=f"routine-{current_user.id}",
+        extra_reason=payload.reason,
+    )
+
+    # Optionally prepend reason into note
+    final_note = notes
+    if payload.reason:
+        prefix = f"User reason for update: {payload.reason}. "
+        final_note = prefix + (notes or "")
+
+    routine = SkinRoutine(
+        user_id=current_user.id,
+        am_routine=am,
+        pm_routine=pm,
+        note=final_note,
+    )
+    db.add(routine)
+    db.commit()
+    db.refresh(routine)
+
+    return RoutineResponse(
+        id=routine.id,
+        created_at=routine.created_at,
+        am_steps=routine.am_routine,
+        pm_steps=routine.pm_routine,
+        note=routine.note,
+    )
+
+
+@app.get("/routine/history", response_model=List[RoutineResponse])
+def get_routine_history(
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    routines = (
+        db.query(SkinRoutine)
+        .filter(SkinRoutine.user_id == current_user.id)
+        .order_by(SkinRoutine.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        RoutineResponse(
+            id=r.id,
+            created_at=r.created_at,
+            am_steps=r.am_routine,
+            pm_steps=r.pm_routine,
+            note=r.note,
+        )
+        for r in routines
+    ]
+
+
+
 
 # ---------- Helper: build user_context for ADK ----------
 
@@ -216,12 +293,15 @@ def build_user_context(user: models.User, profile: models.SkinProfile, diary_ent
 
 # ---------- Chat endpoint (ADK) ----------
 
-@app.post("/chat", response_model=schemas.ChatResponse)
+@app.post("/chat")
 async def chat_with_skincoach(
     payload: schemas.ChatRequest,
-    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    session_id = f"chat-{current_user.id}"
+
+    # --- Build user_context from profile + diary ---
     profile = (
         db.query(models.SkinProfile)
         .filter(models.SkinProfile.user_id == current_user.id)
@@ -237,18 +317,87 @@ async def chat_with_skincoach(
         db.query(models.DiaryEntry)
         .filter(models.DiaryEntry.user_id == current_user.id)
         .order_by(models.DiaryEntry.created_at.desc())
-        .limit(7)
+        .limit(10)
         .all()
     )
 
     user_context = build_user_context(current_user, profile, diary_entries)
 
-    session_id = payload.session_id or str(uuid.uuid4())
-    response_text = await run_skincoach(
-        message=payload.message,
-        user_context=user_context,
-        user_id=str(current_user.id),
+    # 1) Save user message
+    user_msg = ChatMessage(
+        user_id=current_user.id,
         session_id=session_id,
+        role="user",
+        content=payload.message,
+    )
+    db.add(user_msg)
+    db.commit()
+    db.refresh(user_msg)
+
+    # 2) Ask SkinCoach with user_context, but handle 503 nicely
+    try:
+        response_text = await run_skincoach(
+            message=payload.message,
+            session_id=session_id,
+            user_id=str(current_user.id),
+            user_context=user_context,
+        )
+    except Exception as e:
+        # If model is overloaded, ADK / genai throws 503 UNAVAILABLE
+        msg = str(e)
+        if "503" in msg or "UNAVAILABLE" in msg or "model is overloaded" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail="SkinCoach is a bit busy right now (model overloaded). Please try again in a moment.",
+            )
+        # Any other unexpected error
+        print("[/chat] Unexpected error from run_skincoach:", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error while talking to SkinCoach.",
+        )
+
+    # 3) Save assistant reply
+    assistant_msg = ChatMessage(
+        user_id=current_user.id,
+        session_id=session_id,
+        role="assistant",
+        content=response_text,
+    )
+    db.add(assistant_msg)
+    db.commit()
+    db.refresh(assistant_msg)
+
+    return {"response": response_text}
+
+
+
+@app.get("/chat/history", response_model=List[ChatMessageOut])
+def get_chat_history(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    session_id = f"chat-{current_user.id}"
+
+    rows = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.user_id == current_user.id,
+            ChatMessage.session_id == session_id,
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .limit(limit)
+        .all()
     )
 
-    return schemas.ChatResponse(response=response_text)
+    # Map DB rows -> API schema
+    return [
+        ChatMessageOut(
+            role=row.role, 
+            text=row.content, 
+            created_at=row.created_at
+        )
+        for row in rows
+    ]
+
