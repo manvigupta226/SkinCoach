@@ -1,4 +1,4 @@
-# ✨ SkinCoach — AI-Powered Personalized Skincare Companion | [Youtube](https://www.youtube.com/watch?v=l0b867Q0A7k)
+# ✨ SkinCoach — AI-Powered Personalized Skincare Companion | [Demo](https://www.youtube.com/watch?v=l0b867Q0A7k)
 <img width="927" height="497" alt="Screenshot 2025-11-30 004121" src="https://github.com/user-attachments/assets/1dc0ee23-9414-49f0-a85f-7ed22970802e" />
 
 SkinCoach is an AI skincare companion that simplifies routines, ingredients, and product choices using a powerful multi-agent system.
